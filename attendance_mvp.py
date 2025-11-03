@@ -32,7 +32,8 @@ data = {
     }, 
     "timetable": {},
     "attendance_records": {},
-    "class_sessions": {}
+    "class_sessions": {},
+    "rooms_meta": {}
 }
 
 def save_data():
@@ -62,6 +63,8 @@ def load_data():
             data["class_sessions"] = {}
         if "timetable" not in data:
             data["timetable"] = {}
+        if "rooms_meta" not in data:
+            data["rooms_meta"] = {}
         
         # Ensure all required courses exist
         if "courses" not in data:
@@ -74,6 +77,10 @@ def load_data():
                 elif "subjects" not in data["courses"][course_name]:
                     data["courses"][course_name]["subjects"] = {}
         
+        # Initialize rooms_meta if empty
+        if not data["rooms_meta"]:
+            initialize_rooms_meta()
+
         # Save updated data
         save_data()
     else:
@@ -83,8 +90,27 @@ def load_data():
             "courses": required_courses,
             "timetable": {},
             "attendance_records": {},
-            "class_sessions": {}
+            "class_sessions": {},
+            "rooms_meta": {}
         }
+        initialize_rooms_meta()
+
+def initialize_rooms_meta():
+    """Create a deterministic mapping for room attributes per base room index.
+    Odd base rooms (01,03,05,07) are Practical (CL-), capacity 30 or 60.
+    Even base rooms (02,04,06,08) are Theory (CR-), style Round or Normal.
+    Choices are randomized but deterministic per base across all floors.
+    """
+    import random
+    meta = {}
+    for base in range(1, 9):
+        base_key = f"{base:02d}"
+        rng = random.Random(1000 + base)
+        if base % 2 == 1:
+            meta[base_key] = {"type": "Practical", "capacity": rng.choice([30, 60])}
+        else:
+            meta[base_key] = {"type": "Theory", "style": rng.choice(["Round", "Normal"])}
+    data["rooms_meta"] = meta
 
 def register_student():
     if not FACE_RECOGNITION_AVAILABLE:
@@ -188,7 +214,7 @@ def add_subject():
     # Create a window for subject addition
     win = tk.Toplevel(root)
     win.title("Add Subject")
-    win.geometry("500x400")
+    win.geometry("560x520")
     win.resizable(False, False)
     
     # Title
@@ -211,17 +237,52 @@ def add_subject():
     teacher_entry = tk.Entry(win, width=30, font=("Arial", 11))
     teacher_entry.pack(pady=5)
     
-    # Weekly hours input
-    tk.Label(win, text="Weekly Hours (1-10):", font=("Arial", 12)).pack(pady=5)
-    hours_var = tk.StringVar(value="3")
-    hours_combo = ttk.Combobox(win, textvariable=hours_var, values=["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], width=30)
-    hours_combo.pack(pady=5)
+    # Class type selection
+    tk.Label(win, text="Class Type:", font=("Arial", 12)).pack(pady=5)
+    class_type_var = tk.StringVar(value="Theory")
+    class_type_combo = ttk.Combobox(win, textvariable=class_type_var, values=["Theory", "Practical"], width=30, state="readonly")
+    class_type_combo.pack(pady=5)
+
+    # Dynamic options frame
+    options_frame = tk.Frame(win)
+    options_frame.pack(pady=10, fill="x")
+
+    # Theory widgets
+    theory_frame = tk.Frame(options_frame)
+    tk.Label(theory_frame, text="Theory Hours (1-10):", font=("Arial", 12)).pack(pady=5)
+    theory_hours_var = tk.StringVar(value="3")
+    theory_hours_combo = ttk.Combobox(theory_frame, textvariable=theory_hours_var, values=[str(i) for i in range(1, 11)], width=30)
+    theory_hours_combo.pack(pady=5)
+    tk.Label(theory_frame, text="Room Style: Auto (Round/Normal per room)", font=("Arial", 10, "italic")).pack(pady=2)
+
+    # Practical widgets
+    practical_frame = tk.Frame(options_frame)
+    tk.Label(practical_frame, text="Practical Hours (1-10):", font=("Arial", 12)).pack(pady=5)
+    practical_hours_var = tk.StringVar(value="2")
+    practical_hours_combo = ttk.Combobox(practical_frame, textvariable=practical_hours_var, values=[str(i) for i in range(1, 11)], width=30)
+    practical_hours_combo.pack(pady=5)
+    tk.Label(practical_frame, text="Theory Hours (1-10):", font=("Arial", 12)).pack(pady=5)
+    practical_theory_hours_var = tk.StringVar(value="1")
+    practical_theory_hours_combo = ttk.Combobox(practical_frame, textvariable=practical_theory_hours_var, values=[str(i) for i in range(1, 11)], width=30)
+    practical_theory_hours_combo.pack(pady=5)
+    tk.Label(practical_frame, text="Capacity: Auto (30 or 60 per room)", font=("Arial", 10, "italic")).pack(pady=2)
+
+    def update_options(*args):
+        for w in options_frame.winfo_children():
+            w.pack_forget()
+        if class_type_var.get() == "Practical":
+            practical_frame.pack(fill="x")
+        else:
+            theory_frame.pack(fill="x")
+
+    class_type_var.trace_add("write", update_options)
+    update_options()
     
     def save_subject():
         course = course_var.get()
         subject = subject_entry.get().strip()
         teacher = teacher_entry.get().strip()
-        weekly_hours = hours_var.get()
+        selected_type = class_type_var.get()
         
         if not course:
             messagebox.showerror("Error", "Please select a course")
@@ -232,20 +293,38 @@ def add_subject():
         if not teacher:
             messagebox.showerror("Error", "Please enter teacher name")
             return
-        if not weekly_hours:
-            messagebox.showerror("Error", "Please select weekly hours")
-            return
+        # Determine weekly hours and meta
+        if selected_type == "Practical":
+            if not practical_hours_var.get() or not practical_theory_hours_var.get():
+                messagebox.showerror("Error", "Please specify both practical and theory hours")
+                return
+            weekly_hours = int(practical_hours_var.get()) + int(practical_theory_hours_var.get())
+            subject_meta = {"type": "Practical", "practical_hours": int(practical_hours_var.get()), "theory_hours": int(practical_theory_hours_var.get())}
+        else:
+            if not theory_hours_var.get():
+                messagebox.showerror("Error", "Please specify theory hours")
+                return
+            weekly_hours = int(theory_hours_var.get())
+            subject_meta = {"type": "Theory", "theory_hours": int(theory_hours_var.get())}
         
         # Auto-assign a class to this subject
-        assigned_class = auto_assign_class(subject, course)
+        assigned_class = auto_assign_class(subject, course, class_type=selected_type)
+        room_attr = describe_room_attributes(assigned_class)
         
         data["courses"][course]["subjects"][subject] = {
             "teacher": teacher,
             "class": assigned_class,
-            "weekly_hours": int(weekly_hours)
+            "weekly_hours": int(weekly_hours),
+            **subject_meta,
+            **room_attr,
         }
         save_data()
-        messagebox.showinfo("Success", f"Added {subject} to {course}\nTaught by: {teacher}\nClassroom: {assigned_class}\nWeekly Hours: {weekly_hours}")
+        extra = []
+        if room_attr.get("capacity"):
+            extra.append(f"Capacity: {room_attr['capacity']}")
+        if room_attr.get("style"):
+            extra.append(f"Style: {room_attr['style']}")
+        messagebox.showinfo("Success", f"Added {subject} to {course}\nTaught by: {teacher}\nClassroom: {assigned_class}\nWeekly Hours: {weekly_hours}\n" + ("\n".join(extra) if extra else ""))
         win.destroy()
     
     # Button frame
@@ -258,27 +337,52 @@ def add_subject():
     cancel_button = tk.Button(button_frame, text="Cancel", command=win.destroy, width=15, height=2, bg="lightcoral", font=("Arial", 11, "bold"))
     cancel_button.pack(side="left", padx=20)
 
-def auto_assign_class(subject, course):
-    """Automatically assign a class to a subject, avoiding conflicts"""
-    # Generate all possible classroom numbers (101-808)
+def auto_assign_class(subject, course, class_type=None):
+    """Automatically assign a class to a subject, avoiding conflicts and matching class_type.
+    Labels:
+      - CL-xyz for Practical (odd base rooms)
+      - CR-xyz for Theory (even base rooms)
+    """
+    # Build all rooms based on rooms_meta for floors 1..8 and base 01..08
     all_rooms = []
-    for floor in range(1, 9):  # 1st to 8th floor
-        for room in range(1, 9):  # Room 1 to 8 on each floor
-            all_rooms.append(f"Room {floor:02d}{room:02d}")
-    
-    # Get already assigned classes for this course
-    assigned_classes = []
+    for floor in range(1, 9):
+        for base in range(1, 9):
+            base_key = f"{base:02d}"
+            meta = data.get("rooms_meta", {}).get(base_key, {})
+            rtype = meta.get("type", "Theory" if base % 2 == 0 else "Practical")
+            label = ("CL" if rtype == "Practical" else "CR") + f"-{floor}{base:02d}"
+            all_rooms.append((label, rtype))
+    # Gather assigned
+    assigned = set()
     for subj_data in data["courses"][course]["subjects"].values():
         if isinstance(subj_data, dict) and "class" in subj_data:
-            assigned_classes.append(subj_data["class"])
-    
-    # Find an unassigned class
-    for class_room in all_rooms:
-        if class_room not in assigned_classes:
-            return class_room
-    
-    # If all classes are assigned, return the first available one
-    return all_rooms[0] if all_rooms else "Room 101"
+            assigned.add(subj_data["class"])
+    # Prefer type match
+    for label, rtype in all_rooms:
+        if label in assigned:
+            continue
+        if class_type and rtype != class_type:
+            continue
+        return label
+    # Fallback any
+    for label, _ in all_rooms:
+        if label not in assigned:
+            return label
+    return "CR-101"
+
+def describe_room_attributes(room_label):
+    try:
+        num = room_label.split("-")[1]
+        base = num[-2:]
+        meta = data.get("rooms_meta", {}).get(base, {})
+        out = {}
+        if "capacity" in meta:
+            out["capacity"] = meta["capacity"]
+        if "style" in meta:
+            out["style"] = meta["style"]
+        return out
+    except Exception:
+        return {}
 
 def take_attendance():
     if not FACE_RECOGNITION_AVAILABLE:
@@ -576,71 +680,111 @@ def create_timetable():
     tk.Button(win, text="Close", command=win.destroy).pack(pady=5)
 
 def auto_generate_schedule(course, subjects):
-    """Auto-generate timetable for a course based on weekly hours"""
+    """Auto-generate timetable with consecutive blocks for same subject on the same day."""
     import random
-    
+
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     time_slots = ["9:00-10:00", "10:00-11:00", "11:00-12:00", "12:00-1:00", "2:00-3:00", "3:00-4:00", "4:00-5:00"]
-    
+
     timetable = {}
     used_slots = set()
-    used_rooms = set()
-    
-    # Create all possible time slots
-    all_slots = []
-    for day in days:
-        for time_slot in time_slots:
-            all_slots.append((day, time_slot))
-    
-    # Assign each subject to available time slots based on weekly hours
+
+    def find_consecutive_on_day(day, needed, class_room, teacher):
+        free = []
+        for slot in time_slots:
+            key = f"{day}_{slot}"
+            if key in used_slots:
+                free.append(False)
+                continue
+            # check conflicts
+            conflict = False
+            for ek, ev in timetable.items():
+                if not ev:
+                    continue
+                if ek.endswith(f"_{slot}") and ek.startswith(day):
+                    if class_room in ev or teacher in ev:
+                        conflict = True
+                        break
+            free.append(not conflict)
+        run = 0
+        start = 0
+        for i, ok in enumerate(free):
+            if ok:
+                if run == 0:
+                    start = i
+                run += 1
+                if run >= needed:
+                    return start, start + needed - 1
+            else:
+                run = 0
+        return None
+
     for subject, subject_data in subjects.items():
         if isinstance(subject_data, dict):
             teacher = subject_data.get("teacher", "Unknown")
-            class_room = subject_data.get("class", "Room 101")
-            weekly_hours = subject_data.get("weekly_hours", 3)
+            class_room = subject_data.get("class", "CR-101")
+            weekly_hours = int(subject_data.get("weekly_hours", 3))
         else:
             teacher = subject_data
-            class_room = "Room 101"
+            class_room = "CR-101"
             weekly_hours = 3
-        
-        # Get available slots (not used and not conflicting with same room or same teacher)
-        available_slots = []
-        for day, time_slot in all_slots:
-            key = f"{day}_{time_slot}"
-            if key not in used_slots:
-                # Check if this room is already used at this time
-                room_conflict = False
-                teacher_conflict = False
-                for existing_key, existing_info in timetable.items():
-                    if existing_info:
-                        # Check for room conflict
-                        if class_room in existing_info:
-                            room_conflict = True
-                        # Check for teacher conflict
-                        if teacher in existing_info:
-                            teacher_conflict = True
-                        if room_conflict or teacher_conflict:
-                            break
-                
-                if not room_conflict and not teacher_conflict:
-                    available_slots.append((day, time_slot))
-        
-        # Randomly select slots for this subject
-        if len(available_slots) >= weekly_hours:
-            selected_slots = random.sample(available_slots, weekly_hours)
-            for day, time_slot in selected_slots:
-                key = f"{day}_{time_slot}"
-                timetable[key] = f"{subject} | {teacher} | {class_room}"
-                used_slots.add(key)
-                used_rooms.add(class_room)
-        else:
-            # If not enough slots available, assign what we can
-            for day, time_slot in available_slots[:weekly_hours]:
-                key = f"{day}_{time_slot}"
-                timetable[key] = f"{subject} | {teacher} | {class_room}"
-                used_slots.add(key)
-                used_rooms.add(class_room)
-    
+
+        remaining = weekly_hours
+        days_shuffled = days[:]
+        random.shuffle(days_shuffled)
+
+        # Try full block on one day
+        placed = False
+        for day in days_shuffled:
+            res = find_consecutive_on_day(day, remaining, class_room, teacher)
+            if res:
+                s, e = res
+                for idx in range(s, e + 1):
+                    key = f"{day}_{time_slots[idx]}"
+                    timetable[key] = f"{subject} | {teacher} | {class_room}"
+                    used_slots.add(key)
+                remaining = 0
+                placed = True
+                break
+
+        # Split into biggest possible consecutive chunks
+        if not placed and remaining > 0:
+            for day in days_shuffled:
+                for chunk in range(min(remaining, len(time_slots)), 0, -1):
+                    res = find_consecutive_on_day(day, chunk, class_room, teacher)
+                    if res:
+                        s, e = res
+                        for idx in range(s, e + 1):
+                            key = f"{day}_{time_slots[idx]}"
+                            timetable[key] = f"{subject} | {teacher} | {class_room}"
+                            used_slots.add(key)
+                        remaining -= (e - s + 1)
+                        break
+                if remaining == 0:
+                    break
+
+        # Fallback: fill any available slots
+        if remaining > 0:
+            for day in days:
+                for slot in time_slots:
+                    if remaining == 0:
+                        break
+                    key = f"{day}_{slot}"
+                    if key in used_slots:
+                        continue
+                    conflict = False
+                    for ek, ev in timetable.items():
+                        if not ev:
+                            continue
+                        if ek.endswith(f"_{slot}") and ek.startswith(day):
+                            if class_room in ev or teacher in ev:
+                                conflict = True
+                                break
+                    if not conflict:
+                        timetable[key] = f"{subject} | {teacher} | {class_room}"
+                        used_slots.add(key)
+                        remaining -= 1
+
     return timetable
 
 def view_timetable():
@@ -715,7 +859,7 @@ def student_ui():
 def admin_ui():
     win = tk.Toplevel(root)
     win.title("Admin Panel")
-    win.geometry("600x500")
+    win.geometry("900x620")
     
     # Create notebook for tabs
     notebook = ttk.Notebook(win)
@@ -735,18 +879,45 @@ def admin_ui():
     notebook.add(course_frame, text="Course Management")
     
     tk.Label(course_frame, text="Course Management", font=("Arial", 14, "bold")).pack(pady=10)
-    
-    tk.Label(course_frame, text="Available Courses:", font=("Arial", 12, "bold")).pack(pady=5)
-    tk.Label(course_frame, text="• BTech CSDS 311", font=("Arial", 10)).pack(pady=2)
-    tk.Label(course_frame, text="• BTech CS", font=("Arial", 10)).pack(pady=2)
-    tk.Label(course_frame, text="• MBA Tech", font=("Arial", 10)).pack(pady=2)
-    tk.Label(course_frame, text="• BTI div 1", font=("Arial", 10)).pack(pady=2)
-    tk.Label(course_frame, text="• BTI div 2", font=("Arial", 10)).pack(pady=2)
-    tk.Label(course_frame, text="• BTI div 3", font=("Arial", 10)).pack(pady=2)
-    
-    
-    tk.Button(course_frame, text="Add Subject", command=add_subject, width=20, height=2).pack(pady=10)
-    tk.Label(course_frame, text="Note: Classrooms are automatically assigned (Room 101-808)", font=("Arial", 9, "italic")).pack(pady=5)
+
+    selector_frame = tk.Frame(course_frame)
+    selector_frame.pack(fill="x", padx=10, pady=5)
+    tk.Label(selector_frame, text="Select Course:", font=("Arial", 12)).pack(side="left", padx=5)
+    sel_course_var = tk.StringVar()
+    sel_course_combo = ttk.Combobox(selector_frame, textvariable=sel_course_var, values=list(data["courses"].keys()), width=40)
+    sel_course_combo.pack(side="left", padx=5)
+
+    subjects_tree = ttk.Treeview(course_frame, columns=("Subject", "Teacher", "Class", "Type", "Attr", "Hours"), show="headings")
+    for col in ("Subject", "Teacher", "Class", "Type", "Attr", "Hours"):
+        subjects_tree.heading(col, text=col)
+        subjects_tree.column(col, width=120, anchor="center")
+    subjects_tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def refresh_subjects(*args):
+        for i in subjects_tree.get_children():
+            subjects_tree.delete(i)
+        course_name = sel_course_var.get()
+        if not course_name:
+            return
+        for subj, meta in data["courses"][course_name]["subjects"].items():
+            if isinstance(meta, dict):
+                s_type = meta.get("type", "")
+                attr = ""
+                if s_type == "Practical":
+                    cap = meta.get("capacity")
+                    if cap:
+                        attr = f"Cap {cap}"
+                elif s_type == "Theory":
+                    style = meta.get("style")
+                    if style:
+                        attr = style
+                hours = meta.get("weekly_hours", "")
+                subjects_tree.insert("", "end", values=(subj, meta.get("teacher", ""), meta.get("class", ""), s_type, attr, hours))
+
+    sel_course_var.trace_add("write", refresh_subjects)
+
+    tk.Button(course_frame, text="Add Subject", command=add_subject, width=24, height=3, font=("Arial", 11, "bold")).pack(pady=10)
+    tk.Label(course_frame, text="Rooms auto-assigned as CL- (Practical, odd) or CR- (Theory, even). Attributes are consistent across floors.", font=("Arial", 9, "italic"), wraplength=820, justify="left").pack(pady=5)
     
     # Timetable Management Tab
     timetable_frame = ttk.Frame(notebook)
@@ -758,22 +929,22 @@ def admin_ui():
     tk.Label(timetable_frame, text="Subjects are automatically assigned to classes", font=("Arial", 10)).pack(pady=2)
     tk.Label(timetable_frame, text="Timetables are generated automatically", font=("Arial", 10)).pack(pady=2)
     
-    tk.Button(timetable_frame, text="Auto-Generate Timetable", command=create_timetable, width=25, height=2).pack(pady=5)
-    tk.Button(timetable_frame, text="View All Timetables", command=view_timetable, width=25, height=2).pack(pady=5)
+    tk.Button(timetable_frame, text="Auto-Generate Timetable", command=create_timetable, width=28, height=3, font=("Arial", 11, "bold")).pack(pady=5)
+    tk.Button(timetable_frame, text="View All Timetables", command=view_timetable, width=28, height=3, font=("Arial", 11, "bold")).pack(pady=5)
     
     # Close button
-    tk.Button(win, text="Close", command=win.destroy, width=20, height=2).pack(pady=10)
+    tk.Button(win, text="Close", command=win.destroy, width=24, height=3, font=("Arial", 11, "bold")).pack(pady=10)
 
 # Load data and start the application
 load_data()
 
 root = tk.Tk()
 root.title("Attendance System")
-root.geometry("400x300")
+root.geometry("460x360")
 
 # Main buttons
-tk.Button(root, text="Student", command=student_ui, width=20, height=2, font=("Arial", 12, "bold")).pack(pady=20)
-tk.Button(root, text="Admin", command=admin_ui, width=20, height=2, font=("Arial", 12, "bold")).pack(pady=20)
-tk.Button(root, text="Exit", command=root.quit, width=20, height=2, font=("Arial", 12, "bold")).pack(pady=20)
+tk.Button(root, text="Student", command=student_ui, width=24, height=3, font=("Arial", 14, "bold")).pack(pady=16)
+tk.Button(root, text="Admin", command=admin_ui, width=24, height=3, font=("Arial", 14, "bold")).pack(pady=16)
+tk.Button(root, text="Exit", command=root.quit, width=24, height=3, font=("Arial", 14, "bold")).pack(pady=16)
 
 root.mainloop()
