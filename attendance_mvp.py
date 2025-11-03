@@ -24,7 +24,11 @@ data = {
     "students": {}, 
     "courses": {
         "BTech CSDS 311": {"subjects": {}},
-        "BTech CS": {"subjects": {}}
+        "BTech CS": {"subjects": {}},
+        "MBA Tech" : {"subjects": {}}, 
+        "BTI div 1": {"subjects": {}}, 
+        "BTI div 2": {"subjects":{}}, 
+        "BTI div 3": {"subjects":{}}, 
     }, 
     "timetable": {},
     "attendance_records": {},
@@ -37,9 +41,20 @@ def save_data():
 
 def load_data():
     global data
+    # Define all required courses
+    required_courses = {
+        "BTech CSDS 311": {"subjects": {}},
+        "BTech CS": {"subjects": {}},
+        "MBA Tech": {"subjects": {}}, 
+        "BTI div 1": {"subjects": {}}, 
+        "BTI div 2": {"subjects":{}}, 
+        "BTI div 3": {"subjects":{}}, 
+    }
+    
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "rb") as f:
             data = pickle.load(f)
+        
         # Ensure all required keys exist
         if "attendance_records" not in data:
             data["attendance_records"] = {}
@@ -47,6 +62,29 @@ def load_data():
             data["class_sessions"] = {}
         if "timetable" not in data:
             data["timetable"] = {}
+        
+        # Ensure all required courses exist
+        if "courses" not in data:
+            data["courses"] = required_courses.copy()
+        else:
+            # Add any missing courses
+            for course_name, course_data in required_courses.items():
+                if course_name not in data["courses"]:
+                    data["courses"][course_name] = course_data
+                elif "subjects" not in data["courses"][course_name]:
+                    data["courses"][course_name]["subjects"] = {}
+        
+        # Save updated data
+        save_data()
+    else:
+        # If no data file exists, use the default structure
+        data = {
+            "students": {}, 
+            "courses": required_courses,
+            "timetable": {},
+            "attendance_records": {},
+            "class_sessions": {}
+        }
 
 def register_student():
     if not FACE_RECOGNITION_AVAILABLE:
@@ -215,10 +253,10 @@ def add_subject():
     button_frame.pack(pady=30)
     
     add_button = tk.Button(button_frame, text="Add Subject", command=save_subject, width=15, height=2, bg="lightgreen", font=("Arial", 11, "bold"))
-    add_button.pack(side="left", padx=10)
+    add_button.pack(side="left", padx=20)
     
     cancel_button = tk.Button(button_frame, text="Cancel", command=win.destroy, width=15, height=2, bg="lightcoral", font=("Arial", 11, "bold"))
-    cancel_button.pack(side="left", padx=10)
+    cancel_button.pack(side="left", padx=20)
 
 def auto_assign_class(subject, course):
     """Automatically assign a class to a subject, avoiding conflicts"""
@@ -516,13 +554,22 @@ def create_timetable():
                 key = f"{day}_{time_slot}"
                 subject_info = timetable.get(key, "")
                 if subject_info:
-                    subject, class_room = subject_info.split(" (")[0], subject_info.split(" (")[1].rstrip(")")
-                    cell_text = f"{subject}\n({class_room})"
+                    # Parse subject | teacher | class_room format
+                    parts = subject_info.split(" | ")
+                    if len(parts) == 3:
+                        subject, teacher, class_room = parts[0], parts[1], parts[2]
+                        cell_text = f"{subject}\n{teacher}\n({class_room})"
+                    elif " (" in subject_info and ")" in subject_info:
+                        # Old format: subject (class_room)
+                        subject, class_room = subject_info.split(" (")[0], subject_info.split(" (")[1].rstrip(")")
+                        cell_text = f"{subject}\n({class_room})"
+                    else:
+                        cell_text = subject_info
                     bg_color = "lightblue"
                 else:
                     cell_text = ""
                     bg_color = "white"
-                tk.Label(display_frame, text=cell_text, relief="solid", width=15, height=2, 
+                tk.Label(display_frame, text=cell_text, relief="solid", width=15, height=3, 
                         bg=bg_color).grid(row=i+1, column=j+1, padx=2, pady=2)
     
     tk.Button(win, text="Auto-Generate Timetable", command=auto_generate_timetable, width=20, height=2).pack(pady=10)
@@ -556,19 +603,26 @@ def auto_generate_schedule(course, subjects):
             class_room = "Room 101"
             weekly_hours = 3
         
-        # Get available slots (not used and not conflicting with same room)
+        # Get available slots (not used and not conflicting with same room or same teacher)
         available_slots = []
         for day, time_slot in all_slots:
             key = f"{day}_{time_slot}"
             if key not in used_slots:
                 # Check if this room is already used at this time
                 room_conflict = False
+                teacher_conflict = False
                 for existing_key, existing_info in timetable.items():
-                    if existing_key != key and existing_info and class_room in existing_info:
-                        room_conflict = True
-                        break
+                    if existing_info:
+                        # Check for room conflict
+                        if class_room in existing_info:
+                            room_conflict = True
+                        # Check for teacher conflict
+                        if teacher in existing_info:
+                            teacher_conflict = True
+                        if room_conflict or teacher_conflict:
+                            break
                 
-                if not room_conflict:
+                if not room_conflict and not teacher_conflict:
                     available_slots.append((day, time_slot))
         
         # Randomly select slots for this subject
@@ -576,14 +630,14 @@ def auto_generate_schedule(course, subjects):
             selected_slots = random.sample(available_slots, weekly_hours)
             for day, time_slot in selected_slots:
                 key = f"{day}_{time_slot}"
-                timetable[key] = f"{subject} ({class_room})"
+                timetable[key] = f"{subject} | {teacher} | {class_room}"
                 used_slots.add(key)
                 used_rooms.add(class_room)
         else:
             # If not enough slots available, assign what we can
             for day, time_slot in available_slots[:weekly_hours]:
                 key = f"{day}_{time_slot}"
-                timetable[key] = f"{subject} ({class_room})"
+                timetable[key] = f"{subject} | {teacher} | {class_room}"
                 used_slots.add(key)
                 used_rooms.add(class_room)
     
@@ -626,13 +680,22 @@ def view_timetable():
                     key = f"{day}_{time_slot}"
                     subject_info = timetable.get(key, "")
                     if subject_info:
-                        subject, class_room = subject_info.split(" (")[0], subject_info.split(" (")[1].rstrip(")")
-                        cell_text = f"{subject}\n({class_room})"
+                        # Parse subject | teacher | class_room format
+                        parts = subject_info.split(" | ")
+                        if len(parts) == 3:
+                            subject, teacher, class_room = parts[0], parts[1], parts[2]
+                            cell_text = f"{subject}\n{teacher}\n({class_room})"
+                        elif " (" in subject_info and ")" in subject_info:
+                            # Old format: subject (class_room)
+                            subject, class_room = subject_info.split(" (")[0], subject_info.split(" (")[1].rstrip(")")
+                            cell_text = f"{subject}\n({class_room})"
+                        else:
+                            cell_text = subject_info
                         bg_color = "lightblue"
                     else:
                         cell_text = ""
                         bg_color = "white"
-                    tk.Label(display_frame, text=cell_text, relief="solid", width=15, height=2, 
+                    tk.Label(display_frame, text=cell_text, relief="solid", width=15, height=3, 
                             bg=bg_color).grid(row=i+1, column=j+1, padx=2, pady=2)
         else:
             # Show message for courses without timetables
@@ -676,6 +739,11 @@ def admin_ui():
     tk.Label(course_frame, text="Available Courses:", font=("Arial", 12, "bold")).pack(pady=5)
     tk.Label(course_frame, text="• BTech CSDS 311", font=("Arial", 10)).pack(pady=2)
     tk.Label(course_frame, text="• BTech CS", font=("Arial", 10)).pack(pady=2)
+    tk.Label(course_frame, text="• MBA Tech", font=("Arial", 10)).pack(pady=2)
+    tk.Label(course_frame, text="• BTI div 1", font=("Arial", 10)).pack(pady=2)
+    tk.Label(course_frame, text="• BTI div 2", font=("Arial", 10)).pack(pady=2)
+    tk.Label(course_frame, text="• BTI div 3", font=("Arial", 10)).pack(pady=2)
+    
     
     tk.Button(course_frame, text="Add Subject", command=add_subject, width=20, height=2).pack(pady=10)
     tk.Label(course_frame, text="Note: Classrooms are automatically assigned (Room 101-808)", font=("Arial", 9, "italic")).pack(pady=5)
