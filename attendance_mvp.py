@@ -811,14 +811,40 @@ def create_timetable():
                 key = f"{day}_{time_slot}"
                 subject_info = timetable.get(key, "")
                 if subject_info:
-                    # Parse subject | teacher | class_room format - REMOVE room info
-                    parts = subject_info.split(" | ")
-                    if len(parts) >= 2:
+                    # Parse subject | teacher | class_room format
+                    parts = [p.strip() for p in subject_info.split(" | ")]
+                    subject, teacher, class_room = None, None, None
+
+                    if len(parts) >= 3:
+                        subject, teacher, class_room = parts[0], parts[1], parts[2]
+                    elif len(parts) == 2:
                         subject, teacher = parts[0], parts[1]
-                        cell_text = f"{subject}\n👤 {teacher}"
                     else:
-                        subject = subject_info
-                        cell_text = subject_info
+                        text = subject_info
+                        if " (" in text and text.endswith(")"):
+                            subject = text[:text.rfind(" (")].strip()
+                            class_room = text[text.rfind(" (")+2:-1].strip()
+                        else:
+                            subject = text
+
+                    # --- Option 1 display-only fix: enforce CR/CL prefix and remove "Room"
+                    if class_room:
+                        cleaned = class_room.replace("Room", "").replace("room", "").strip().replace(" ", "")
+                        if not cleaned.startswith("CR") and not cleaned.startswith("CL"):
+                            class_room = format_class_room_with_prefix(subject, course, cleaned)
+                        else:
+                            class_room = cleaned
+
+                    # Build cell text
+                    if subject is None:
+                        subject = ""
+                    if teacher:
+                        if class_room:
+                            cell_text = f"{subject}\n👤 {teacher}\n🏫 {class_room}"
+                        else:
+                            cell_text = f"{subject}\n👤 {teacher}"
+                    else:
+                        cell_text = f"{subject}\n🏫 {class_room}" if class_room else subject
                     
                     # Assign consistent color to each subject
                     if subject not in subject_color_map:
@@ -1113,7 +1139,15 @@ def view_timetable():
                             else:
                                 subject = text
 
-                        # Build the cell text with classroom under the teacher
+                        # --- Option 1 display-only fix: enforce CR/CL prefix and remove "Room"
+                        if class_room:
+                            cleaned = class_room.replace("Room", "").replace("room", "").strip().replace(" ", "")
+                            if not cleaned.startswith("CR") and not cleaned.startswith("CL"):
+                                class_room = format_class_room_with_prefix(subject, course, cleaned)
+                            else:
+                                class_room = cleaned
+
+                        # Build the cell text with classroom under the teacher (no "room" word)
                         if subject is None:
                             subject = ""
                         if teacher:
